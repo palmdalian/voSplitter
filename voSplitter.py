@@ -8,12 +8,12 @@ import csv
 
 
 # Adjustment parameters
-head_adjust = 0.15
-tail_adjust = 0.35
-threshold = 100
+head_adjust = 0.10
+tail_adjust = 0.3
+db_threshold = -26
 silence_length = 0.7
 min_sound_length = 0.5
-sample_number = 50 #The bigger the number, the faster it goes (but loses accuracy)
+sample_number = 1000 #The bigger the number, the faster it goes (but loses accuracy)
 
 class SoundFinder():
 	def __init__(self, input_path):
@@ -51,14 +51,23 @@ class SoundFinder():
 		self.framerate = self.wav.getframerate()
 		sample_width = self.wav.getsampwidth()
 		sample_length = float(sample_number) / self.framerate
+
+		db = math.exp(math.log(10.0)*0.05 * db_threshold) # Convert from db to float. Was having trouble with the normal 10**(db/20)
+		all_frames = self.wav.readframes(self.wav.getnframes())
+		max_amp = audioop.rms(all_frames, sample_width)
+		self.threshold = db * max_amp
+		self.wav.rewind()
+
 		frames = self.wav.readframes(sample_number)
 		total_length = sample_length
 		sequential = False
+		print(self.threshold, max_amp)
+
 
 		while (frames):
 			amplitute = audioop.rms(frames, sample_width)
 			# Is the sample lower than the threshold?
-			if amplitute < threshold:
+			if amplitute < self.threshold:
 				if sequential is False:
 					sequential = True
 					self.silence_list.append([total_length, total_length])
@@ -122,7 +131,7 @@ class SoundFinder():
 
 		with open(self.output_base + "_editlist.csv", 'w') as f:
 			writer = csv.writer(f)
-			settings = "# head_adjust={head_adjust}, tail_adjust={tail_adjust}, threshold={threshold}, silence_length={silence_length}, min_sound_length={min_sound_length}, sample_number={sample_number}".format(head_adjust=head_adjust, tail_adjust=tail_adjust, threshold=threshold, silence_length=silence_length, min_sound_length=min_sound_length, sample_number=sample_number)
+			settings = "# head_adjust={head_adjust}, tail_adjust={tail_adjust}, threshold={threshold}, silence_length={silence_length}, min_sound_length={min_sound_length}, sample_number={sample_number}".format(head_adjust=head_adjust, tail_adjust=tail_adjust, threshold=self.threshold, silence_length=silence_length, min_sound_length=min_sound_length, sample_number=sample_number)
 			writer.writerows([[settings]])
 			writer.writerows(self.sound_list)
 		if self.convertAudio is True:
@@ -145,4 +154,5 @@ if __name__ == '__main__':
 		print path
 		finder = SoundFinder(path)
 		finder.find_sound()
+		print (finder.sound_list)
 		finder.save_chunks()
