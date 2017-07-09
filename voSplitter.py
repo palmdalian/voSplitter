@@ -17,7 +17,7 @@ min_sound_length = 0.2
 sample_number = 100 #The bigger the number, the faster it goes (but loses accuracy)
 
 class SoundFinder():
-	def __init__(self, input_path):
+	def __init__(self, input_path, output_type="split", detect_type="peak"):
 		self.input_path = input_path
 		root = os.path.dirname(self.input_path)
 		base = os.path.basename(self.input_path)
@@ -27,7 +27,8 @@ class SoundFinder():
 		self.silence_list = []
 		self.sound_list = []
 		self.convertAudio = False
-		self.output_type = "split"
+		self.detect_type = detect_type
+		self.output_type = output_type
 		self.prepare_wav()
 
 	def prepare_wav(self):
@@ -49,14 +50,29 @@ class SoundFinder():
 			self.wav = wave.open(self.converted_path)
 
 
+	def get_max(self):
+		if self.detect_type == "rms":
+			current_max = 0
+			frames = self.wav.readframes(sample_number)
+			while frames:
+				amp = audioop.rms(frames, self.sample_width)
+				if amp > current_max:
+					current_max = amp
+				frames = self.wav.readframes(sample_number)
+			return current_max
+		else:
+			all_frames = self.wav.readframes(self.wav.getnframes())
+			max_amp = audioop.max(all_frames, self.sample_width)
+			return max_amp
+
+
 	def find_sound(self):
 		self.framerate = self.wav.getframerate()
-		sample_width = self.wav.getsampwidth()
+		self.sample_width = self.wav.getsampwidth()
 		sample_length = float(sample_number) / self.framerate
 
 		db = math.exp(math.log(10.0)*0.05 * db_threshold) # Convert from db to float. Was having trouble with the normal 10**(db/20)
-		all_frames = self.wav.readframes(self.wav.getnframes())
-		max_amp = audioop.max(all_frames, sample_width)
+		max_amp = self.get_max()
 		self.threshold = db * max_amp
 		self.wav.rewind()
 
@@ -69,7 +85,10 @@ class SoundFinder():
 		sound_counter = 0
 
 		while (frames):
-			amplitute = audioop.rms(frames, sample_width)
+			if self.detect_type == "rms":
+				amplitute = audioop.rms(frames, self.sample_width)
+			else:
+				amplitute = audioop.max(frames, self.sample_width)
 			# Is it silence?
 			if amplitute < self.threshold:
 				if silence_start < 0:
@@ -166,8 +185,7 @@ if __name__ == '__main__':
 
 	for path in input_paths:
 		print path
-		finder = SoundFinder(path)
+		finder = SoundFinder(path, "split", "max")
 		finder.find_sound()
 		print (finder.sound_list)
-		finder.output_type = "trim"
 		finder.save_chunks_ffmpeg()
