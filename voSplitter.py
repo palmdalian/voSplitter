@@ -14,7 +14,7 @@ tail_adjust = 0.3
 db_threshold = -20
 min_silence_length = 0.7
 min_sound_length = 0.2
-sample_number = 1000 #The bigger the number, the faster it goes (but loses accuracy)
+sample_number = 100 #The bigger the number, the faster it goes (but loses accuracy)
 
 class SoundFinder():
 	def __init__(self, input_path):
@@ -141,6 +141,8 @@ class SoundFinder():
 			os.mkdir(self.output)
 		for i, sound in enumerate(self.sound_list):
 			start = sound[0]
+			if start < 0.00001: # Weird edge case with pre-edited clips
+				start = 0
 			end = sound[1]
 			outpath = "{output_base}_{num}{ext}".format(output_base=self.output_base, num=str(i).zfill(3), ext=self.split[1])
 			args = ['ffmpeg', '-y', '-v', 'quiet', '-i', self.input_path, '-ss', str(start), '-to', str(end), '-c:a', 'copy', outpath]
