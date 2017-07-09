@@ -11,9 +11,9 @@ import subprocess
 # Adjustment parameters
 head_adjust = 0.10
 tail_adjust = 0.3
-db_threshold = -25
+db_threshold = -20
 min_silence_length = 0.7
-min_sound_length = 0.5
+min_sound_length = 0.2
 sample_number = 1000 #The bigger the number, the faster it goes (but loses accuracy)
 
 class SoundFinder():
@@ -66,6 +66,7 @@ class SoundFinder():
 		silence_counter = 0
 		sound_start = 0
 		found_sound = False
+		sound_counter = 0
 
 		while (frames):
 			amplitute = audioop.rms(frames, sample_width)
@@ -73,10 +74,10 @@ class SoundFinder():
 			if amplitute < self.threshold:
 				if silence_start < 0:
 					silence_start = total_length
-				if silence_counter > min_silence_length and found_sound:
+				if silence_counter > min_silence_length and found_sound and sound_counter > min_sound_length:
 					found_sound = False
-					silence_start = total_length
-					self.sound_list.append([sound_start, silence_start])
+					sound_counter = 0
+					self.sound_list.append([sound_start, total_length])
 				silence_counter += sample_length
 				
 			# No, so we start a
@@ -85,18 +86,28 @@ class SoundFinder():
 					found_sound = True
 					silence_counter = 0
 					sound_start = total_length
+				if silence_counter > 0 and sound_counter > min_sound_length:
+					silence_start = -1
+					silence_counter = 0
+				sound_counter += sample_length
 
 			frames = self.wav.readframes(sample_number)
 			total_length += sample_length
 
-		if silence_counter > 0 and found_sound:
+		# print("Sound Start: {}, Sound Counter: {}, Silence Counter: {}, Silence Start: {}, FoundSound: {}".format(sound_start, sound_counter, silence_counter, silence_start, found_sound))
+		if found_sound and sound_counter > min_sound_length and silence_start > sound_start:
 			self.sound_list.append([sound_start, silence_start])
-		elif found_sound == True:
-			self.sound_list.append([sound_start, total_length])
 		
 		for timing in self.sound_list:
 			timing[0] -= head_adjust
 			timing[1] += tail_adjust
+
+		# Do a pass to make sure there isn't an overlap. (Sometimes happens with long tails)
+		for i in xrange(len(self.sound_list)-1, 0, -1):
+			if i-1 >= 0:
+				if self.sound_list[i-1][1] - self.sound_list[i][0] > 0.1:
+					self.sound_list[i-1][1] = self.sound_list[i][1]
+					self.sound_list.pop(i)
 
 	def save_chunks(self):
 		# Save out the chunks
@@ -152,6 +163,6 @@ if __name__ == '__main__':
 		print path
 		finder = SoundFinder(path)
 		finder.find_sound()
-		# print (finder.sound_list)
+		print (finder.sound_list)
 		finder.output_type = "trim"
 		finder.save_chunks_ffmpeg()
