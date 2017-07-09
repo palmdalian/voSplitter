@@ -5,13 +5,14 @@ import subprocess
 import math
 import os
 import csv
+import subprocess
 
 
 # Adjustment parameters
 head_adjust = 0.10
 tail_adjust = 0.3
-db_threshold = -26
-silence_length = 0.7
+db_threshold = -25
+min_silence_length = 0.7
 min_sound_length = 0.5
 sample_number = 1000 #The bigger the number, the faster it goes (but loses accuracy)
 
@@ -21,11 +22,12 @@ class SoundFinder():
 		root = os.path.dirname(self.input_path)
 		base = os.path.basename(self.input_path)
 		self.split = os.path.splitext(base)
-		self.output = os.path.join(root, self.split[0])
+		self.output = os.path.join(root, "out")
 		self.output_base = os.path.join(self.output, self.split[0])
 		self.silence_list = []
 		self.sound_list = []
 		self.convertAudio = False
+		self.output_type = "split"
 		self.prepare_wav()
 
 	def prepare_wav(self):
@@ -54,65 +56,52 @@ class SoundFinder():
 
 		db = math.exp(math.log(10.0)*0.05 * db_threshold) # Convert from db to float. Was having trouble with the normal 10**(db/20)
 		all_frames = self.wav.readframes(self.wav.getnframes())
-		max_amp = audioop.rms(all_frames, sample_width)
+		max_amp = audioop.max(all_frames, sample_width)
 		self.threshold = db * max_amp
 		self.wav.rewind()
 
 		frames = self.wav.readframes(sample_number)
-		total_length = sample_length
-		sequential = False
-		print(self.threshold, max_amp)
-
+		total_length = 0
+		silence_start = -1
+		silence_counter = 0
+		sound_start = 0
+		found_sound = False
 
 		while (frames):
 			amplitute = audioop.rms(frames, sample_width)
-			# Is the sample lower than the threshold?
+			# Is it silence?
 			if amplitute < self.threshold:
-				if sequential is False:
-					sequential = True
-					self.silence_list.append([total_length, total_length])
-				self.silence_list[-1][1] = total_length
+				if silence_start < 0:
+					silence_start = total_length
+				if silence_counter > min_silence_length and found_sound:
+					found_sound = False
+					silence_start = total_length
+					self.sound_list.append([sound_start, silence_start])
+				silence_counter += sample_length
+				
 			# No, so we start a
 			else:
-				sequential = False
-				self.silence_list.append([total_length, total_length])
-				if len(self.silence_list) and (self.silence_list[-1][1] - self.silence_list[-1][0]) < silence_length:
-					self.silence_list.pop(-1)
+				if found_sound is False:
+					found_sound = True
+					silence_counter = 0
+					sound_start = total_length
 
 			frames = self.wav.readframes(sample_number)
 			total_length += sample_length
 
-		# Go through and make time adjustments, getting rid of false stops
-		pop_list = []
-		for i, mark in enumerate(self.silence_list):
-			if (mark[1]-mark[0]) < silence_length:
-				pop_list.append(i)
-			else:
-				mark[0] - head_adjust
-				mark[1] + tail_adjust
-
-		for i in reversed(pop_list):
-			self.silence_list.pop(i)
-
-		# As of right now, this is a silence list (which is easier to get).
-		# Next have to change it into a sound list
-		for i in xrange(0, len(self.silence_list)):
-			if i+1 < len(self.silence_list):
-				self.sound_list.append([self.silence_list[i][1], self.silence_list[i+1][0]])
-
-		# One last pass to get rid of sounds that are too short
-		pop_list = []
-		for i, mark in enumerate(self.sound_list):
-			if (mark[1]-mark[0]) < min_sound_length:
-				pop_list.append(i)
-
-		for i in reversed(pop_list):
-			self.sound_list.pop(i)
-
+		if silence_counter > 0 and found_sound:
+			self.sound_list.append([sound_start, silence_start])
+		elif found_sound == True:
+			self.sound_list.append([sound_start, total_length])
+		
+		for timing in self.sound_list:
+			timing[0] -= head_adjust
+			timing[1] += tail_adjust
 
 	def save_chunks(self):
 		# Save out the chunks
-		print("Splitting file " + self.split[0])
+		if self.output_type == "trim":
+			self.sound_list = [[self.sound_list[0][0], self.sound_list[-1][1]]]
 		if not os.path.exists(self.output):
 			os.mkdir(self.output)
 		for i, sound in enumerate(self.sound_list):
@@ -128,12 +117,21 @@ class SoundFinder():
 			wavout.writeframes(frames)
 			wavout.close()
 		self.wav.close()
+		if self.convertAudio is True:
+			os.remove(self.converted_path)
 
-		with open(self.output_base + "_editlist.csv", 'w') as f:
-			writer = csv.writer(f)
-			settings = "# head_adjust={head_adjust}, tail_adjust={tail_adjust}, threshold={threshold}, silence_length={silence_length}, min_sound_length={min_sound_length}, sample_number={sample_number}".format(head_adjust=head_adjust, tail_adjust=tail_adjust, threshold=self.threshold, silence_length=silence_length, min_sound_length=min_sound_length, sample_number=sample_number)
-			writer.writerows([[settings]])
-			writer.writerows(self.sound_list)
+	def save_chunks_ffmpeg(self):
+		if self.output_type == "trim":
+			self.sound_list = [[self.sound_list[0][0], self.sound_list[-1][1]]]
+		if not os.path.exists(self.output):
+			os.mkdir(self.output)
+		for i, sound in enumerate(self.sound_list):
+			start = sound[0]
+			end = sound[1]
+			outpath = "{output_base}_{num}{ext}".format(output_base=self.output_base, num=str(i).zfill(3), ext=self.split[1])
+			args = ['ffmpeg', '-y', '-v', 'quiet', '-i', self.input_path, '-ss', str(start), '-to', str(end), '-c:a', 'copy', outpath]
+			subprocess.check_call(args)
+		self.wav.close()
 		if self.convertAudio is True:
 			os.remove(self.converted_path)
 
@@ -154,5 +152,6 @@ if __name__ == '__main__':
 		print path
 		finder = SoundFinder(path)
 		finder.find_sound()
-		print (finder.sound_list)
-		finder.save_chunks()
+		# print (finder.sound_list)
+		finder.output_type = "trim"
+		finder.save_chunks_ffmpeg()
