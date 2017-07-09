@@ -110,7 +110,8 @@ class SoundFinder():
 					self.sound_list.pop(i)
 
 	def save_chunks(self):
-		# Save out the chunks
+		if not len(self.sound_list):
+			return
 		if self.output_type == "trim":
 			self.sound_list = [[self.sound_list[0][0], self.sound_list[-1][1]]]
 		if not os.path.exists(self.output):
@@ -132,6 +133,8 @@ class SoundFinder():
 			os.remove(self.converted_path)
 
 	def save_chunks_ffmpeg(self):
+		if not len(self.sound_list):
+			return
 		if self.output_type == "trim":
 			self.sound_list = [[self.sound_list[0][0], self.sound_list[-1][1]]]
 		if not os.path.exists(self.output):
