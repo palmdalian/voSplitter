@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/faiface/beep/wav"
+	"github.com/palmdalian/premiere_xml/builder"
 )
 
 func main() {
 	var path string
-	flag.StringVar(&path, "f", "test.wav", "filepath")
+	flag.StringVar(&path, "i", "test.wav", "input")
 	flag.Parse()
 
 	path, err := filepath.Abs(path)
@@ -32,10 +33,14 @@ func main() {
 		TailAdjust:           0.7,
 	}
 
-	list := detector.FindSound(path)
-	for _, s := range list {
-		fmt.Println("PEAK", s)
+	soundList, sampleRate := detector.FindSound(path)
+	timings := builderTimings(soundList, sampleRate, path)
+	pBuilder, err := builder.NewPremiereBuilder()
+	if err != nil {
+		log.Fatal(err)
 	}
+	pBuilder.ProcessAudioTimings(timings)
+	pBuilder.SaveToPath("/tmp/test.xml")
 }
 
 type SoundTiming struct {
@@ -56,7 +61,7 @@ type Detector struct {
 	TailAdjust           float64
 }
 
-func (d *Detector) FindSound(path string) []*SoundTiming {
+func (d *Detector) FindSound(path string) ([]*SoundTiming, int) {
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -135,7 +140,7 @@ func (d *Detector) FindSound(path string) []*SoundTiming {
 			filteredSounds = append(filteredSounds, s)
 		}
 	}
-	return filteredSounds
+	return filteredSounds, sampleRate
 }
 
 func peak(samples [][2]float64) float64 {
@@ -154,4 +159,18 @@ func peak(samples [][2]float64) float64 {
 	}
 
 	return 20 * math.Log10(math.Abs(min))
+}
+
+func builderTimings(soundTimings []*SoundTiming, sampleRate int, path string) []*builder.Timing {
+	timings := []*builder.Timing{}
+	for _, t := range soundTimings {
+		timing := &builder.Timing{
+			Start: int64(t.start * float64(sampleRate)),
+			End:   int64(t.end * float64(sampleRate)),
+			Rate:  int64(sampleRate),
+			Path:  path,
+		}
+		timings = append(timings, timing)
+	}
+	return timings
 }
