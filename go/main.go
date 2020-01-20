@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math"
 	"os"
@@ -10,37 +12,68 @@ import (
 	"time"
 
 	"github.com/faiface/beep/wav"
+	premiere "github.com/palmdalian/premiere_xml"
 	"github.com/palmdalian/premiere_xml/builder"
 )
 
 func main() {
 	var path string
+	var jsonOutput bool
+	var outputPath string
+	var threshold float64
+	var samples int
+	var minSilence float64
+	var minSound float64
+	var headAdjust float64
+	var tailAdjust float64
+
 	flag.StringVar(&path, "i", "test.wav", "input")
+	flag.StringVar(&outputPath, "o", "/tmp/test.xml", "output")
+	flag.BoolVar(&jsonOutput, "j", false, "json")
+	flag.Float64Var(&threshold, "threshold", -15, "Threshold in db")
+	flag.IntVar(&samples, "samples", 800, "Number of samples")
+	flag.Float64Var(&minSilence, "silence", 0.9, "Minimum silence length")
+	flag.Float64Var(&minSound, "sound", 0.5, "Minimum sound length")
+	flag.Float64Var(&headAdjust, "head", 0.2, "Head adjustment")
+	flag.Float64Var(&tailAdjust, "tail", 0.7, "Tail adjustment")
+
 	flag.Parse()
 
 	path, err := filepath.Abs(path)
+
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(path)
 
 	detector := &Detector{
-		DBThreshold:          -15.0,
-		SampleNumber:         800,
-		MinimumSilenceLength: 0.9,
-		MinimumSoundLength:   0.5,
-		HeadAdjust:           0.2,
-		TailAdjust:           0.7,
+		DBThreshold:          threshold,
+		SampleNumber:         samples,
+		MinimumSilenceLength: minSilence,
+		MinimumSoundLength:   minSound,
+		HeadAdjust:           headAdjust,
+		TailAdjust:           tailAdjust,
 	}
 
 	soundList, sampleRate := detector.FindSound(path)
 	timings := builderTimings(soundList, sampleRate, path)
+	if jsonOutput {
+		file, err := json.MarshalIndent(timings, "", " ")
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = ioutil.WriteFile(outputPath, file, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	pBuilder, err := builder.NewPremiereBuilder()
 	if err != nil {
 		log.Fatal(err)
 	}
 	pBuilder.ProcessAudioTimings(timings)
-	pBuilder.SaveToPath("/tmp/test.xml")
+	pBuilder.SaveToPath(outputPath)
 }
 
 type SoundTiming struct {
@@ -115,7 +148,7 @@ func (d *Detector) FindSound(path string) ([]*SoundTiming, int) {
 	}
 	for _, s := range silenceList {
 		last := sounds[len(sounds)-1]
-		last.end = s.start
+		last.end = s.start + d.TailAdjust
 		sounds = append(sounds, &SoundTiming{start: s.end - d.HeadAdjust, end: 0})
 	}
 	lastSound := sounds[len(sounds)-1]
@@ -165,10 +198,12 @@ func builderTimings(soundTimings []*SoundTiming, sampleRate int, path string) []
 	timings := []*builder.Timing{}
 	for _, t := range soundTimings {
 		timing := &builder.Timing{
-			Start: int64(t.start * float64(sampleRate)),
-			End:   int64(t.end * float64(sampleRate)),
-			Rate:  int64(sampleRate),
-			Path:  path,
+			Start:     int64(t.start * float64(sampleRate)),
+			End:       int64(t.end * float64(sampleRate)),
+			Rate:      int64(sampleRate),
+			StartTick: fmt.Sprintf("%d", int64(float64(t.start)*premiere.PProTicksConstant)),
+			EndTick:   fmt.Sprintf("%d", int64(float64(t.end)*premiere.PProTicksConstant)),
+			Path:      path,
 		}
 		timings = append(timings, timing)
 	}
